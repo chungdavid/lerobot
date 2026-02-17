@@ -255,3 +255,7 @@ MODEL_PROTOCOL = {
     "sm8512bl": 0,
     "scs0009": 1,
 }
+
+MODEL_VEL_SCALE = {
+    "sts3215": 11.25, # raw units per deg/s
+}

@@ -62,10 +62,15 @@ class SOFollower(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.operating_mode_body = OperatingMode.POSITION
 
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.bus.motors}
+    
+    @property
+    def _motors_vel_ft(self) -> dict[str, type]:
+        return {f"{motor}.vel": float for motor in self.bus.motors}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -79,7 +84,10 @@ class SOFollower(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return self._motors_ft
+        if self.operating_mode_body == OperatingMode.POSITION:
+            return self._motors_ft
+        else:
+            return self._motors_vel_ft
 
     @property
     def is_connected(self) -> bool:
@@ -157,7 +165,11 @@ class SOFollower(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
-                self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+                if motor == "gripper":
+                    self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+                else:
+                    self.bus.write("Operating_Mode", motor, self.operating_mode_body.value)
+
                 # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
                 self.bus.write("P_Coefficient", motor, 16)
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -195,9 +207,13 @@ class SOFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        """Command arm to move to a target joint configuration.
+        """Command arm to move to a target joint configuration or velocity.
 
-        The relative action magnitude may be clipped depending on the configuration parameter
+        The action type must match the operating mode set at initialization:
+            - OperatingMode.POSITION: expects keys ending in '.pos'
+            - OperatingMode.VELOCITY: expects keys ending in '.vel'
+
+        For position mode, the relative action magnitude may be clipped depending on the configuration parameter
         `max_relative_target`. In this case, the action sent differs from original action.
         Thus, this function always returns the action actually sent.
 
@@ -208,8 +224,20 @@ class SOFollower(Robot):
             RobotAction: the action sent to the motors, potentially clipped.
         """
 
+        if self.operating_mode_body == OperatingMode.POSITION:
+            return self._send_position_action(action)
+        else:
+            return self._send_velocity_action(action)
+        
+    def _send_position_action(self, action: RobotAction):
+        """Send position commands to the motors."""
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
+        if not goal_pos:
+            raise ValueError(
+                "No position actions found. In POSITION control mode, action keys must end with '.pos'"
+            )
+        
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
@@ -220,6 +248,57 @@ class SOFollower(Robot):
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
+    def _send_velocity_action(self, action: RobotAction):
+        """Send velocity commands to the motors."""
+
+        goal_vel = {key.removesuffix(".vel"): val for key, val in action.items() if key.endswith(".vel")}
+        gripper_pos = action.get("gripper.pos") # Note: the gripper is always in position mode (0-100)
+        sent_action = {}
+        
+        if not goal_vel and gripper_pos is None:
+            raise ValueError(
+                "No arm or gripper actions found. In VELOCITY control mode, action keys end with '.vel' for arm motors and '.pos' for the gripper."
+            )
+
+        # Send goal velocity to the arm
+        if goal_vel:
+            self.bus.sync_write("Goal_Velocity", goal_vel)
+            sent_action.update({f"{motor}.vel": val for motor, val in goal_vel.items()})
+        
+        if gripper_pos is not None:
+            self.bus.write("Goal_Position", "gripper", gripper_pos, normalize=True)
+            sent_action["gripper.pos"] = gripper_pos
+
+        return sent_action
+
+    def set_operating_mode(self, operating_mode: str):
+        """Change the operating mode of the motors.
+        
+        Args:
+            control_mode: The new control mode (POSITION or VELOCITY).
+        """
+        str_to_mode = {
+            "position": OperatingMode.POSITION,
+            "velocity": OperatingMode.VELOCITY
+        }
+
+        mode_enum = str_to_mode.get(operating_mode)
+
+        if mode_enum is None:
+            raise ValueError(f"Invalid operating mode '{operating_mode}'. Must be one of {list(str_to_mode.keys())}")
+        
+        if mode_enum == self.operating_mode_body:
+            return
+        
+        self.operating_mode_body = mode_enum
+
+        # Clear cached action_features since control mode changed
+        if "action_features" in self.__dict__:
+            del self.__dict__["action_features"]
+        
+        if self.is_connected:
+            self.configure()
 
     @check_if_not_connected
     def disconnect(self):

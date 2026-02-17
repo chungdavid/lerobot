@@ -30,13 +30,14 @@ from .tables import (
     MODEL_PROTOCOL,
     MODEL_RESOLUTION,
     SCAN_BAUDRATES,
+    MODEL_VEL_SCALE
 )
 
 DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
-NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
+NORMALIZED_DATA = ["Goal_Position", "Present_Position", "Goal_Velocity"]
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ class FeetechMotorsBus(SerialMotorsBus):
     model_number_table = deepcopy(MODEL_NUMBER_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
     normalized_data = deepcopy(NORMALIZED_DATA)
+    model_vel_scale_table = deepcopy(MODEL_VEL_SCALE)
 
     def __init__(
         self,

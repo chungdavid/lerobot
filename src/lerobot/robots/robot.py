@@ -15,6 +15,7 @@
 import abc
 import builtins
 from pathlib import Path
+from enum import Enum
 
 import draccus
 
@@ -203,6 +204,10 @@ class Robot(abc.ABC):
             RobotAction: The action actually sent to the motors potentially clipped or modified, e.g. by
                 safety limits on velocity.
         """
+        pass
+
+    @abc.abstractmethod
+    def set_operating_mode(self, operating_mode: str) -> None:
         pass
 
     @abc.abstractmethod

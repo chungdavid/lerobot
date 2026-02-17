@@ -339,6 +339,7 @@ class SerialMotorsBus(MotorsBusBase):
     model_number_table: dict[str, int]
     model_resolution_table: dict[str, int]
     normalized_data: list[str]
+    model_vel_scale_table: list[str]
 
     def __init__(
         self,
@@ -893,6 +894,19 @@ class SerialMotorsBus(MotorsBusBase):
                 raise NotImplementedError
 
         return unnormalized_values
+    
+    def _unnormalize_velocity(self, ids_values: dict[int, int]):
+        unnormalized_values = {}
+        for id_, val in ids_values.items():
+            motor = self._id_to_name(id_)
+            model = self._id_to_model(id_)
+            drive_mode = self.apply_drive_mode and self.calibration.get(motor, {}).drive_mode
+            
+            scale = self.model_vel_scale_table[model]
+            val = -val if drive_mode else val
+            unnormalized_values[id_] = int(val * scale)
+        
+        return unnormalized_values
 
     @abc.abstractmethod
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
@@ -1073,7 +1087,10 @@ class SerialMotorsBus(MotorsBusBase):
 
         int_value = int(value)
         if normalize and data_name in self.normalized_data:
-            int_value = self._unnormalize({id_: value})[id_]
+            if "Velocity" in data_name:
+                int_value = self._unnormalize_velocity({id_: value})[id_]
+            else:
+                int_value = self._unnormalize({id_: value})[id_]
 
         int_value = self._encode_sign(data_name, {id_: int_value})[id_]
 
@@ -1234,7 +1251,10 @@ class SerialMotorsBus(MotorsBusBase):
 
         int_ids_values = {id_: int(val) for id_, val in raw_ids_values.items()}
         if normalize and data_name in self.normalized_data:
-            int_ids_values = self._unnormalize(raw_ids_values)
+            if "Velocity" in data_name:
+                int_ids_values = self._unnormalize_velocity(raw_ids_values)
+            else:
+                int_ids_values = self._unnormalize(raw_ids_values)
 
         int_ids_values = self._encode_sign(data_name, int_ids_values)
 
